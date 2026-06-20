@@ -38,44 +38,59 @@ async fn main() -> Result<(), Box<dyn error::Error>> {
         
         // running the command for cached
         let on_stage = Command::new("git")
-            .arg("diff")
-            .arg("--cached")
-            .output()
-            .expect("failed to execute process");
+            .args(["diff", "--cached"])
+            .output()?;
 
         // extracting the results
         if on_stage.status.success() {
-            if let Ok(output) = String::from_utf8(on_stage.stdout) {
-                // println!("the output: {}", output);
+            
+            let output = String::from_utf8(on_stage.stdout)?;
 
-                let base_prompt = format!(
-                    "Hi, you are code reviewer, based on this last code: {output} 
-                    could you find any bugs or security holes?
-                    make the answer as short as possible"
-                );
+            let system_prompt = "You are a senior Rust engineer acting as a mentor reviewing a git diff. \
+                Your job is to make ME a better programmer, NOT to fix the code for me.\n\n\
+                RULES (these override everything else):\n\
+                - Do NOT write corrected code blocks, rewritten lines, or \"change X to Y\" fixes.\n\
+                - You MAY drop a tiny hint: name a method, trait, type, or clippy lint, and give a \
+                one-phrase nudge. But never the full solution — I should still have to think.\n\
+                - Point me toward the problem and let me find the fix myself.\n\n\
+                For each issue, output exactly:\n\
+                  [SEVERITY] file:line — short title\n\
+                  Why it matters: <one sentence>\n\
+                  Think about: <a guiding question, may name a method/trait/lint as a hint>\n\
+                  Learn more: <a Google search query I can paste>\n\n\
+                SEVERITY is one of: BUG, SECURITY, SECRET, STYLE, IDIOM.\n\
+                If you spot a leaked key, password, or token, flag it as SECRET FIRST, before anything else.\n\n\
+                If a different crate or std feature would be more idiomatic, name it and give ONE sentence \
+                on why it fits (no usage code), plus a search query so I go learn it myself.\n\n\
+                Keep it under ~8 findings. If the diff is clean, say so in one line. \
+                Review ONLY what changed in the diff.";
 
-                // sending the request-prompt
-                let response: Value = client
-                    .chat()
-                    .create_byot(json!({
-                        "messages": [
-                            {
-                                "role": "user",
-                                "content": base_prompt
-                            }
-                        ],
-                        "model": "cohere/north-mini-code:free",
-                    }))
-                    .await?;
+            let user_prompt = format!("Here is the git diff to review:\n\n{output}");
 
-                if let Some(message) = response["choices"][0].as_object() {
-                    if let Some(content) = message["message"].as_object() {
-                        if let Some(llm_respond) = content["content"].as_str() {
-                            println!("{}", llm_respond);
+            // sending the request-prompt
+            let response: Value = client
+                .chat()
+                .create_byot(json!({
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": system_prompt
+                        },
+                        {
+                            "role": "user",
+                            "content": user_prompt
                         }
+                    ],
+                    "model": "cohere/north-mini-code:free",
+                }))
+                .await?;
+
+            if let Some(message) = response["choices"][0].as_object() {
+                if let Some(content) = message["message"].as_object() {
+                    if let Some(llm_respond) = content["content"].as_str() {
+                        println!("{}", llm_respond);
                     }
                 }
-                // println!("{:#?}", response);
             }
         }
 
